@@ -27,3 +27,16 @@
 
 - Master volume will keep track of the stored keys
 - Child volumes will store the actual data
+
+## Redis protocol for communication
+
+| Data-Type        |      Prefix      |                      Structure                    |                                                                                                         Example                                                                              |
+|------------------|:----------------:|:-------------------------------------------------:|                                                                                                                                                    -----------------------------------------:|
+| Simple String    |        +         | +{string data}\r\n                                | ``` +this is a simple string\r\n ```                                                                                                                                                         | 
+| Error            |        -         | -{error message}\r\n                              | ``` -ERR unknown command "FLUHS"\r\n ```                                                                                                                                                     |
+| Integer          |        :         | :{the number}\r\n                                 | ``` :1337\r\n ```                                                                                                                                                                            |
+| Binary           |        $         | ${number of bytes}\r\n{data}\r\n                  | ``` $6\r\n ```<br>```foobar\r\n```                                                                                                                                                           |
+| Array            |        *         | *{number of elements}\r\n{0 or more of above}\r\n | ``` *3\r\n ```<br>``` +a simple string element\r\n ```<br>``` :12345\r\n ```<br>``` $7\r\n ```<br>``` testing\r\n ```                                                                        |
+| Dictionary       |        %         | %{number of keys}\r\n{0 or more of above}\r\n     | ```%3\r\n```<br>```+key1\r\n```<br>```+value1\r\n```<br>```+key2\r\n```<br>```*2\r\n 1```<br>```+value2-0\r\n```<br>```+value2-1\r\n```<br>```:3\r\n```<br>```$7\r\n```<br>```testing\r\n``` |
+| NULL             |        $         | $-1\r\n (string of length -1)                     | ``` $-1\r\n ```                                                                                                                                                                              |
+    
