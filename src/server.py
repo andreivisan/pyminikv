@@ -7,6 +7,12 @@ from io import BytesIO
 from socket import error as socket_error
 
 
+"""
+CONSTANTS
+"""
+ERR_BAD_REQUEST = "Bad Request"
+
+
 # use exception to notify the connection-handling loop of problems
 class CommandError(Exception): pass
 class Disconnect(Exception): pass
@@ -15,9 +21,54 @@ Error = namedtuple('Error', ('message',))
 
 
 class ProtocolHandler(object):
+    def __init__(self):
+        self.handlers = {
+            '+': self.handle_simple_string,
+            '-': self.handle_error,
+            ':': self.handle_integer,
+            '$': self.handle_string,
+            '*': self.handle_array,
+            '%': self.handle_dict
+        }
+        
     def handle_request(self, socket_file):
         # parse a request from the client into it's component parts
-        pass
+        first_byte = socket_file.read(1)
+        if not first_byte:
+            raise Disconnect()
+        
+        try:
+            # delegate to the appropriate handler based on the first byte
+            return self.handlers[first_byte](socket_file)
+        except KeyError:
+            raise CommandError(ERR_BAD_REQUEST)
+        
+    def handle_simple_string(self, socket_file):
+        return socket_file.readline().rstrip('\r\n')
+    
+    def handle_error(self, socket_file):
+        return Error(socket_file.readline().rstrip('\r\n'))
+    
+    def handle_integer(self, socket_file):
+        return int(socket_file.readline().rstrip('\r\n'))
+    
+    def handle_string(self, socket_file):
+        # first read the length ($<length>\r\n).
+        length = int(socket_file.readline().rstrip('\r\n'))
+        if length == -1:
+            return None  # Special-case for NULLs.
+        length += 2  # Include the trailing \r\n in count.
+        return socket_file.read(length)[:-2]
+    
+    def handle_array(self, socket_file):
+        num_elements = int(socket_file.readline().rstrip('\r\n'))
+        # for each value in the array call handle_request to handle the appropriate value
+        return [self.handle_request(socket_file) for _ in range(num_elements)]
+    
+    def handle_dict(self, socket_file):
+        num_items = int(socket_file.readline().rstrip('\r\n'))
+        elements = [self.handle_request(socket_file) for _ in range(num_items * 2)]
+        return dict(zip(elements[::2], elements[1::2]))
     
     def write_response(self, socket_file, data):
         # serialize the response data and send it to the client
