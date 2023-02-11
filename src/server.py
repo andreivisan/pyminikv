@@ -35,3 +35,30 @@ class Server(object):
         
         self._protocol = ProtocolHandler()
         self.kv = {}
+        
+    def connection_handler(self, conn, addr):
+        # convert "conn" (a socket object) into a file-like object
+        socket_file = conn.makefile('rwb')
+        
+        # process client requests until client disconnects
+        while True:
+            try:
+                data = self._protocol.handle_request(socket_file)
+            except Disconnect:
+                break
+            
+            try:
+                resp = self.get_response(data)
+            except CommandError as exc:
+                resp = Error(exc.args[0])
+                
+            self._protocol.write_response(socket_file, resp)
+            
+        def get_response(self, data):
+            # unpack the data sent by the client
+            # execute the command they specified
+            # pass back the return value
+            pass
+        
+        def run(self):
+            self._server._serve_forever()
