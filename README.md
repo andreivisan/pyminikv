@@ -21,3 +21,9 @@
     - Arrays (which may be nested)
     - Dictionaries (which may be nested)
     - Error messages
+7. Initially stored in memory - future in the file system
+
+## Architecture
+
+- Master volume will keep track of the stored keys
+- Child volumes will store the actual data
