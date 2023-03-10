@@ -11,6 +11,10 @@ from socket import error as socket_error
 CONSTANTS
 """
 ERR_BAD_REQUEST = "Bad Request"
+ERR_UNRECOGNIZED_DATA_TYPE = "Unrecognized data type: %s"
+ERR_CMD_SIMPLE_STRING = "Request must be list or simple string"
+ERR_CMD_MISSING_COMMAND = "Missing command"
+ERR_CMD_UNRECOGNIZED_COMMAND = "Unrecognized command: %s"
 
 
 # use exception to notify the connection-handling loop of problems
@@ -71,9 +75,35 @@ class ProtocolHandler(object):
         return dict(zip(elements[::2], elements[1::2]))
     
     def write_response(self, socket_file, data):
-        # serialize the response data and send it to the client
-        pass
+        buffer = BytesIO()
+        self._write(buffer, data)
+        buffer.seek(0)
+        socket_file.write(buffer.getvalue())
+        socket_file.flush()
     
+    def _write(self, buffer, data):
+        if isinstance(data, str):
+            data = data.encode('utf-8')
+            
+        if isinstance(data, bytes):
+            buffer.write('$%s\r\n%s\r\n' % (len(data), data))
+        elif isinstance(data, int):
+            buffer.write(':%s\r\n' % data)
+        elif isinstance(data, Error):
+            buffer.write('-%s\r\n' % data.message) # TODO check if this is correct
+        elif isinstance(data, (list, tuple)):
+            buffer.write('*%s\r\n' % len(data))
+            for item in data:
+                self._write(buffer, item)
+        elif isinstance(data, dict):
+            buffer.write('%%%s\r\n' % len(data))
+            for key, value in data.items():
+                self._write(buffer, key)
+                self._write(buffer, data[key])
+        elif data is None:
+            buffer.write('$-1\r\n')
+        else:
+            raise CommandError(ERR_UNRECOGNIZED_DATA_TYPE % type(data))
     
 class Server(object):
     def __init__(self, host='127.0.0.1', port=31337, max_clients=64):
@@ -85,8 +115,39 @@ class Server(object):
         )
         
         self._protocol = ProtocolHandler()
-        self.kv = {}
+        self._kv = {}
         
+        self._commands = self.get_commands()
+        
+    def get_commands(self):
+        return {
+            'GET': self.get,
+            'SET': self.set,
+            'DELETE': self.delete,
+            'FLUSH': self.flush,
+            'MGET': self.mget,
+            'MSET': self.mset
+        }
+        
+    def get_response(self, data):
+        # unpack the data sent by the client
+        # execute the command they specified
+        # pass back the return value
+        if not isinstance(data, list):
+            try:
+                data = data.split()
+            except:
+                raise CommandError(ERR_CMD_SIMPLE_STRING)
+            
+        if not data:
+            raise CommandError(ERR_CMD_MISSING_COMMAND)
+        
+        command = data[0].upper()
+        if command not in self._commands:
+            raise CommandError(ERR_CMD_UNRECOGNIZED_COMMAND % command)
+        
+        return self._commands[command](*data[1:])
+    
     def connection_handler(self, conn, addr):
         # convert "conn" (a socket object) into a file-like object
         socket_file = conn.makefile('rwb')
@@ -105,11 +166,72 @@ class Server(object):
                 
             self._protocol.write_response(socket_file, resp)
             
-        def get_response(self, data):
-            # unpack the data sent by the client
-            # execute the command they specified
-            # pass back the return value
-            pass
+    def get(self, key):
+        return self._kv.get(key)
+    
+    def set(self, key, value):
+        self._kv[key] = value
+        return 1
+    
+    def delete(self, key):
+        if key in self._kv:
+            del self._kv[key]
+            return 1
+        return 0
+    
+    def flush(self):
+        kv_len = len(self._kv)
+        self._kv.clear()
+        return kv_len
+    
+    def mget(self, *keys):
+        return [self._kv.get(key) for key in keys]
+    
+    def mset(self, *items):
+        data = zip(items[::2], items[1::2])
+        for key, value in data:
+            self._kv[key] = value
+        return len(data)
+            
+    def run(self):
+        self._server.serve_forever()
         
-        def run(self):
-            self._server._serve_forever()
+        
+class Client(object):
+    def __init__(self, host='127.0.0.1', port=31337):
+        self._protocol = ProtocolHandler()
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.connect((host, port))
+        self._fh = self._socket.makefile('rwb')
+        
+    def execute(self, *args):
+        self._protocol.write_response(self._fh, args)
+        resp = self._protocol.handle_request(self._fh)
+        if isinstance(resp, Error):
+            raise CommandError(resp.message)
+        return resp
+    
+    def get(self, key):
+        return self.execute('GET', key)
+    
+    def set(self, key, value):
+        return self.execute('SET', key, value)
+    
+    def delete(self, key):
+        return self.execute('DELETE', key)
+    
+    def flush(self):
+        return self.execute('FLUSH')
+    
+    def mget(self, *keys):
+        return self.execute('MGET', *keys)
+    
+    def mset(self, *items):
+        return self.execute('MSET', *items)
+    
+    
+if __name__ == '__main__':
+    from gevent import monkey
+    monkey.patch_all()
+    Server().run()
+        
